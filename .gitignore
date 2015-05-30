@@ -1,0 +1,8 @@
+*.iml
+hs*
+local-config.groovy
+*-local-config.groovy
+target/
+.classpath
+.idea
+.project
