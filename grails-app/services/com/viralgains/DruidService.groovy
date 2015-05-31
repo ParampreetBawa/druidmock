@@ -4,8 +4,12 @@ import com.viralgains.exception.QueryTypeNotSupportedException
 import grails.converters.JSON
 import groovy.sql.GroovyRowResult
 import groovy.sql.Sql
+import groovy.transform.WithReadLock
 
 import java.text.SimpleDateFormat
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReadWriteLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 /**
  * Created by parampreet on 30/5/15.
@@ -16,10 +20,11 @@ class DruidService {
 
 
     def dataSource
-    List<Map> cache
+    List<Map> cache = []
 
     static String DateFormatISO8601JsonFull="yyyy-MM-dd'T'HH:mm:ss.SSSX";
     static SimpleDateFormat sdf = new SimpleDateFormat(DateFormatISO8601JsonFull)
+    private final ReadWriteLock lock = new ReentrantReadWriteLock()
 
     List doQuery(String queryStr) {
         QueryDTO queryDTO = parseQuery(queryStr)
@@ -101,7 +106,10 @@ class DruidService {
     }
 
     List<Map> doFilters(QueryDTO queryDTO) {
-        List<Map> response = cache.findAll { it.time >= queryDTO.fromTime && it.time <= queryDTO.toTime }.collect({new HashMap(it)})
+        List<Map> response
+        if(lock.readLock().tryLock(10,TimeUnit.SECONDS)) {
+            response = cache.findAll { it.time >= queryDTO.fromTime && it.time <= queryDTO.toTime }.collect({new HashMap(it)})
+        }
         queryDTO.filters?.each { key, val ->
             if (val instanceof List) {
                 response = response.findAll({ (val as List).contains(it.get(key)) })
@@ -113,8 +121,8 @@ class DruidService {
     }
 
 
+
     void buildDataCache() {
-        cache = []
         Sql sql = new Sql(dataSource)
         List<GroovyRowResult> rs = sql.rows("select id from campaign")
         List<String> cids = rs.collect {
@@ -125,7 +133,11 @@ class DruidService {
         List<String> pubIds = rs.collect {
             it.get('id')
         }
-        genPlayerEventData(cids, pubIds)
+        if(lock.writeLock().tryLock(10,TimeUnit.SECONDS)){
+            cache.clear()
+            genPlayerEventData(cids, pubIds)
+            lock.readLock().unlock()
+        }
     }
 
     private void genPlayerEventData(List<String> cids, List<String> pubIds) {
@@ -209,6 +221,7 @@ class DruidService {
     }
 
     List<Map> getCache() {
-        cache
+        if(lock.readLock().tryLock(10,TimeUnit.SECONDS))
+            cache
     }
 }
